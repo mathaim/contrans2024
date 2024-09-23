@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# Use Python as the base image
+# Use Python as the base image, bookworm is a Docker image and inside the container it will be Python 3.12.5
 FROM python:3.12.5-bookworm
 
 # Set the working directory to /contrans2024
