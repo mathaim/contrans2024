@@ -24,10 +24,11 @@ dash-bootstrap-components = "==1.6.0"
 scikit-learn = "==1.5.1"
 jupyter = "==1.1.1"
 jupyterlab = "==4.2.5"
-psycopg = {extras = ["binary", "pool"], version = "==3.2.1"}
+psycopg = {extras = ["pool", "binary"], version = "*"}
 nbconvert = {extras = ["webpdf"], version = "*"}
 
 [dev-packages]
 
 [requires]
 python_version = "3.12"
+python_full_version = "3.12.5"
