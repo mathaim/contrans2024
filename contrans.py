@@ -4,6 +4,7 @@ import os
 import requests
 import dotenv
 import json
+from bs4 import BeautifulSoup
 
 class contrans:
     def __init__(self):
@@ -144,6 +145,7 @@ class contrans:
                 
         params['limit'] = 250
         j = 0
+        bills_list = []
         bio_df = pd.DataFrame()
         while j < totalrecords:
             params['offset'] = j
@@ -151,8 +153,20 @@ class contrans:
                                          params=params,
                                          headers=headers)
             records = r.json()['sponsoredLegislation']
-            bills_dict = bills_dict.update(records)
+            bills_list= bills_list + records
             j = j + 250
 
-        return bills_dict
+        return bills_list
     
+    def get_billdata(self, billurl):
+        r = requests.get(billurl,
+                    params = {'api_key':self.congresskey})
+        bill_json = json.loads(r.text)
+        texturl = bill_json['bill']['textVersions']['url']
+        r = requests.get(texturl,
+                        params= {'api_key':self.congresskey})
+        toscrape = json.loads(r.text)['textVersions'][0]['formats'][0]['url']
+        r = requests.get(toscrape)
+        mysoup = BeautifulSoup(r.text, 'html.parser') #equivalent of json.loads, allows you to search through a string
+        billtext = mysoup.text
+        bill_json['bill_text'] = billtext
