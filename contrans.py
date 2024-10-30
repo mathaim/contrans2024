@@ -4,6 +4,8 @@ import os
 import requests
 import dotenv
 import json
+import psycopg #python connector between python env and sql server
+from sqlalchemy import create_engine
 from bs4 import BeautifulSoup
 
 class contrans:
@@ -235,9 +237,27 @@ class contrans:
                 members = members.drop('terms.item', axis=1)
                 return termsDF, members
     
+    ### Connect to Databases
+        
+    def connect_to_postgres(self, pw, user='postgres', 
+                                host='localhost', port='5432',
+                                create_contrans = False):
+                dbserver = psycopg.connect(
+                    user=user, 
+                    password=pw, 
+                    host=host, 
+                    port=port)
+                dbserver.autocommit = True
+                if create_contrans:
+                        cursor = dbserver.cursor() #cursor means im going to submit code to your database
+                        cursor.execute("DROP DATABASE IF EXISTS contrans")
+                        cursor.execute("CREATE DATABASE contrans")
+                engine = create_engine(f'postgresql+psycopg://{user}:{pw}@{host}:{port}/contrans')
+                return dbserver, engine
+                
      ### Methods for building the 3NF relational DB tables
 
-    def make_members_df(self, members, ideology):
+    def make_members_df(self, members, ideology, engine):
                 '''
                 members should be the output of get_bioguideIDs(), 
                 with terms removed by get_terms(),
@@ -248,13 +268,35 @@ class contrans:
                                       left_on='bioguideId', 
                                       right_on='bioguide_id',
                                       how='left')
-                return members_df
+                #dbserver, engine = self.connect_to_postgres(self.POSTGRES_PASSWORD)
+                members_df.columns = members_df.columns.str.lower() #sql likes lowercase
+                members_df.to_sql('members', con=engine, 
+                                  index=False, 
+                                  chunksize = 1000, 
+                                  if_exists='replace')
         
-    def make_terms_df(self):
-                return self
+    def make_terms_df(self, terms, engine):
+                terms.columns = terms.columns.str.lower()
+                terms.to_sql('terms', con=engine, 
+                             index=False, 
+                             chunksize = 1000, 
+                             if_exists='replace')
         
-    def make_votes_df(self):
-                return self
-        
+    def make_votes_df(self, votes, engine):
+                votes.columns = votes.columns.str.lower()
+                votes.to_sql('votes', con=engine, 
+                             index=False, 
+                             chunksize = 1000, 
+                             if_exists='replace')       
+                 
     def make_agreement_df(self):
                 return self
+    
+    def dbml_helper(self,data):
+        dt = data.dtypes.reset_index().rename({0:'dtype'}, axis=1)
+        replace_map = {'object': 'varchar',
+                    'int64': 'int',
+                    'float64': 'float'}
+        dt['dtype'] = dt['dtype'].replace(replace_map)
+        return dt.to_string(index=False, header=False)
+    
