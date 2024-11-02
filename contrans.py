@@ -22,6 +22,9 @@ class contrans:
         self.mypassword = os.getenv("mypassword")
         self.congresskey=os.getenv("congresskey")
         self.newskey=os.getenv("newskey")
+        self.POSTGRES_PASSWORD = os.getenv('POSTGRES_PASSWORD') 
+        self.MONGO_INITDB_ROOT_USERNAME = os.getenv('MONGO_INITDB_ROOT_USERNAME')
+        self.MONGO_INITDB_ROOT_PASSWORD = os.getenv('MONGO_INITDB_ROOT_PASSWORD')
         self.us_state_to_abbrev = {
                         "Alabama": "AL","Alaska": "AK","Arizona": "AZ","Arkansas": "AR",
                         "California": "CA","Colorado": "CO","Connecticut": "CT","Delaware": "DE",
@@ -269,7 +272,8 @@ class contrans:
                                       right_on='bioguide_id',
                                       how='left')
                 #dbserver, engine = self.connect_to_postgres(self.POSTGRES_PASSWORD)
-                members_df.columns = members_df.columns.str.lower() #sql likes lowercase
+                members_df.columns = members_df.columns.str.lower()
+                members_df.columns = members_df.columns.str.replace('.', '_') 
                 members_df.to_sql('members', con=engine, 
                                   index=False, 
                                   chunksize = 1000, 
