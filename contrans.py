@@ -4,6 +4,7 @@ import os
 import requests
 import dotenv
 import json
+import pymongo
 import psycopg #python connector between python env and sql server
 from sqlalchemy import create_engine
 from bs4 import BeautifulSoup
@@ -183,7 +184,7 @@ class contrans:
             records = r.json()['sponsoredLegislation']
             bills_list= bills_list + records
             j = j + 250
-
+        bills_list = [x for x in bills_list if '/nill' in x['url']]
         return bills_list
     def make_cand_table(self):
                 members = self.get_bioguideIDs()
@@ -217,6 +218,7 @@ class contrans:
                 return crosswalk
     
     def get_billdata(self, billurl):
+        print(billurl)
         r = requests.get(billurl,
                     params = {'api_key':self.congresskey})
         bill_json = json.loads(r.text)
@@ -227,7 +229,8 @@ class contrans:
         r = requests.get(toscrape)
         mysoup = BeautifulSoup(r.text, 'html.parser') #equivalent of json.loads, allows you to search through a string
         billtext = mysoup.text
-        bill_json['bill_text'] = billtext
+        bill_json['bill']['bill_text'] = billtext
+        return bill_json
 
     def terms_df(self, members):
                 termsDF = pd.DataFrame()
@@ -258,6 +261,17 @@ class contrans:
                 engine = create_engine(f'postgresql+psycopg://{user}:{pw}@{host}:{port}/contrans')
                 return dbserver, engine
                 
+    def connect_to_mongo(self, from_scratch = False):
+                myclient = pymongo.MongoClient(f'mongodb://{self.MONGO_INITDB_ROOT_USERNAME}:{self.MONGO_INITDB_ROOT_PASSWORD}@localhost:27017/')
+                mongo_contrans = myclient['contrans']
+                collist = mongo_contrans.list_collection_names()
+                if from_scratch and 'bills' in collist:
+                    mongo_contrans.bills.drop()
+                return mongo_contrans['bills']
+    
+
+
+
      ### Methods for building the 3NF relational DB tables
 
     def make_members_df(self, members, ideology, engine):
@@ -293,8 +307,37 @@ class contrans:
                              chunksize = 1000, 
                              if_exists='replace')       
                  
-    def make_agreement_df(self):
-                return self
+    ### Analyses
+    def make_agreement_df(self, bioguide_id, engine):
+                myquery = f'''
+                SELECT icpsr
+                FROM members m
+                WHERE bioguideid = {bioguide_id}
+                '''
+                icpsr = int(pd.read_sql_query(myquery, con=engine)['icpsr'][0])
+                myquery = f'''
+                SELECT m.name, m.partyname, m.state, m.district, v.agree
+                FROM members m
+                INNER JOIN (
+                SELECT
+                        a.icpsr AS icpsr1,
+                        b.icpsr AS icpsr2,
+                        AVG(CAST((a.cast_code = b.cast_code) AS INT)) AS agree
+                        FROM votes a
+                INNER JOIN votes b
+                        ON a.rollnumber = b.rollnumber
+                        AND a.chamber = b.chamber
+                WHERE a.icpsr={icpsr} AND b.icpsr!={icpsr}
+                GROUP BY icpsr1, icpsr2
+                ORDER BY agree DESC
+                ) v
+                ON CAST(m.icpsr AS INT) = v.icpsr2
+                WHERE m.icpsr IS NOT NULL
+                ORDER BY v.agree DESC
+                '''
+                df = pd.read_sql_query(myquery, con=engine)
+                return df.head(10), df.tail(10)
+ 
     
     def dbml_helper(self,data):
         dt = data.dtypes.reset_index().rename({0:'dtype'}, axis=1)
