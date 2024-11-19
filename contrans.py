@@ -6,6 +6,8 @@ import dotenv
 import json
 import pymongo
 import psycopg #python connector between python env and sql server
+import plotly.express as px
+from bson.json_util import dumps,loads
 from sqlalchemy import create_engine
 from bs4 import BeautifulSoup
 
@@ -13,13 +15,9 @@ class contrans:
     def __init__(self):
         """
         Initializes a contrans object.
-        
-        Parameters:
-        None
-        
-        Returns:
-        None
+
         """
+        dotenv.load_dotenv()
         self.mypassword = os.getenv("mypassword")
         self.congresskey=os.getenv("congresskey")
         self.newskey=os.getenv("newskey")
@@ -129,7 +127,7 @@ class contrans:
             j = j + 250
 
         #bio_df = bio_df[['name', 'state', 'district', 'partyName', 'bioguideId']]
-        return bio_df
+        return bio_df.reset_index(drop=True)
      
     
     def get_bioguide(self, name, state=None, district=None):
@@ -154,12 +152,12 @@ class contrans:
 
         if state is not None:
             members = members.query('state == @state')
-        if district:
+        if district is not None:
             members = members.query('district == @district') 
         
         return members.reset_index(drop=True)
     
-    def get_sponsoredlegislation(self, bioguideid):
+    def get_sponsoredlegislation(self, bioguideid, congress=118):
         params = {'api_key': self.congresskey,
                           'limit': 1} 
         
@@ -175,7 +173,6 @@ class contrans:
         params['limit'] = 250
         j = 0
         bills_list = []
-        bio_df = pd.DataFrame()
         while j < totalrecords:
             params['offset'] = j
             r = requests.get(root + endpoint,
@@ -184,10 +181,12 @@ class contrans:
             records = r.json()['sponsoredLegislation']
             bills_list= bills_list + records
             j = j + 250
-        bills_list = [x for x in bills_list if '/nill' in x['url']]
+        bills_list = [x for x in bills_list if x['congress']==congress]
+        bills_list = [x for x in bills_list if "/bill" in x['url']]
+
         return bills_list
-    def make_cand_table(self):
-                members = self.get_bioguideIDs()
+    def make_cand_table(self, members):
+                # members input is output of get_terms()
                 replace_map = {'Republican': 'R','Democratic': 'D','Independent': 'I'}
                 members['partyletter'] = members['partyName'].replace(replace_map)
                 members['state'] = members['state'].replace(self.us_state_to_abbrev)
@@ -229,8 +228,13 @@ class contrans:
         r = requests.get(toscrape)
         mysoup = BeautifulSoup(r.text, 'html.parser') #equivalent of json.loads, allows you to search through a string
         billtext = mysoup.text
-        bill_json['bill']['bill_text'] = billtext
-        return bill_json
+        try:
+            bill_json['bill_text'] = billtext
+            return bill_json['bill']
+
+        except:
+            
+            return None
 
     def terms_df(self, members):
                 termsDF = pd.DataFrame()
@@ -269,6 +273,41 @@ class contrans:
                     mongo_contrans.bills.drop()
                 return mongo_contrans['bills']
     
+    def upload_one_member_to_mongo(self, mongo_bills, bioguide):
+                bill_list = self.get_sponsoredlegislation(bioguide)
+                bill_list_with_text = [self.get_billdata(x['url']) for x in bill_list]
+                mongo_bills.insert_many(bill_list_with_text)
+    
+    def upload_many_members_to_mongo(self, mongo_bills, members):
+            i =1
+            for m in members:
+                    status = f'Now uploading bills from {m} to MongoDB; legislator {i} of {len(members)}'
+                    
+                    print(status)
+                    try: 
+                           self.upload_one_member_to_mongo(mongo_bills, m)
+                    except:
+                           print(f'Failed to upload {m}')
+                    i +=1
+                    
+
+
+    def query_mongo(self, mongo_bills, bioguide):
+           cursor = collection.find(rows,columns)
+           result_dumps = dumps(cursor)
+           result_loads = loads(result_dumps)
+           result_df = pd.DataFrame.from_records(result_loads)
+           return result_df
+    
+    def query_mongo_searchengine(self,collection, keytosearch, searchterms,columns={}):
+           collection.create_index[(keytosearch,'text')]
+           cursor = collection.find({'$text': {'$search': searchterms,
+                                     '$caseSensitive':False}},
+                                     columns)
+           result_dumps = dumps(cursor)
+           result_loads = loads(result_dumps)
+           result_df = pd.DataFrame.from_records(result_loads)
+           return result_df
 
 
 
@@ -306,7 +345,16 @@ class contrans:
                              index=False, 
                              chunksize = 1000, 
                              if_exists='replace')       
-                 
+    
+    
+    def dbml_helper(self,data):
+        dt = data.dtypes.reset_index().rename({0:'dtype'}, axis=1)
+        replace_map = {'object': 'varchar',
+                    'int64': 'int',
+                    'float64': 'float'}
+        dt['dtype'] = dt['dtype'].replace(replace_map)
+        return dt.to_string(index=False, header=False)
+                
     ### Analyses
     def make_agreement_df(self, bioguide_id, engine):
                 myquery = f'''
@@ -339,11 +387,31 @@ class contrans:
                 return df.head(10), df.tail(10)
  
     
-    def dbml_helper(self,data):
-        dt = data.dtypes.reset_index().rename({0:'dtype'}, axis=1)
-        replace_map = {'object': 'varchar',
-                    'int64': 'int',
-                    'float64': 'float'}
-        dt['dtype'] = dt['dtype'].replace(replace_map)
-        return dt.to_string(index=False, header=False)
+    
+    def plot_ideology(self, bioguide_id):
+                server, engine = self.connect_to_postgres(self.postgrespassword)
+                myquery = '''
+                SELECT bioguideid, district, name, partyname, state, nominate_dim1
+                FROM members
+                '''
+                ideo = pd.read_sql_query(myquery, con=engine)
+                member_ideo = ideo.query(f"bioguideid == {bioguide_id}").reset_index(drop=True)
+                fig = px.histogram(ideo, x='nominate_dim1',
+                                nbins=60,
+                                title='Distribution of Nominate Dim1',
+                                color='partyname')
+                fig.update_xaxes(title_text="Left-Right Ideology")
+                fig.update_layout(title_x=0.5)
+                fig.update_layout(title_text="How Liberal or Conservative Is this Person?", title_x=0.5)
+                fig.update_layout(legend_title_text='Party')
+                fig.update_xaxes(tickvals=[-.5, 0, .5], ticktext=["Liberal", "Centrist", "Conservative"])
+                fig.add_vline(x=0, line_width=1, line_color="black")
+                fig.add_vline(x=member_ideo.iloc[0]['nominate_dim1'], line_width=3, line_dash="dash", line_color="red")
+                fig.update_layout(hovermode="closest")
+                fig.add_annotation(text=f"{member_ideo.iloc[0]['name']} ({member_ideo.iloc[0]['state']}-{member_ideo.iloc[0]['district']})",
+                                xref="x", yref="paper",
+                                x=member_ideo.iloc[0]['nominate_dim1'], y=1.05,
+                                showarrow=False,
+                                font=dict(size=12, color="red"))
+                return fig
     
