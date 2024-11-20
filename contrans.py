@@ -217,7 +217,6 @@ class contrans:
                 return crosswalk
     
     def get_billdata(self, billurl):
-        print(billurl)
         r = requests.get(billurl,
                     params = {'api_key':self.congresskey})
         bill_json = json.loads(r.text)
@@ -228,13 +227,10 @@ class contrans:
         r = requests.get(toscrape)
         mysoup = BeautifulSoup(r.text, 'html.parser') #equivalent of json.loads, allows you to search through a string
         billtext = mysoup.text
-        try:
-            bill_json['bill_text'] = billtext
-            return bill_json['bill']
+  
+        bill_json['bill_text'] = billtext
+        return bill_json['bill']
 
-        except:
-            
-            return None
 
     def terms_df(self, members):
                 termsDF = pd.DataFrame()
